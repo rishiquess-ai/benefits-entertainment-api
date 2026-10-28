@@ -1,0 +1,23 @@
+# Local MOCK databases until the real ones are available.
+#   docker compose up -d     start PostgreSQL with the mock master + tenant DBs
+#   docker compose down -v   stop it and delete the mock data
+# The schema and seed data live in db/mock/init.sql (runs on first start only).
+# Port 5434 avoids a local PostgreSQL on 5432 and node-backend's on 5433.
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - '5434:5432'
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mock_root_password
+    volumes:
+      - ./db/mock:/docker-entrypoint-initdb.d:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -h 127.0.0.1']
+      interval: 5s
+      retries: 20
+
+volumes:
+  postgres-data:
