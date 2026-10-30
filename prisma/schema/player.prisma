@@ -1,0 +1,32 @@
+// Player module. Fields marked "profile API" are filled from the tenant
+// profile API response.
+
+model Player {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId        String    @map("customer_id") @db.Uuid
+  /// profile API: first_name
+  firstName         String    @map("first_name") @db.VarChar(100)
+  /// profile API: last_name
+  lastName          String?   @map("last_name") @db.VarChar(100)
+  /// profile API: emp_id
+  playerId          String    @map("player_id") @db.VarChar(100)
+  /// profile API: employee_unique_id. Unique within a customer.
+  playerReferenceId String    @map("player_reference_id") @db.VarChar(100)
+  /// first_name and last_name joined with a space.
+  displayName       String    @map("display_name") @db.VarChar(255)
+  /// profile API: contact_no
+  contactNo         String?   @map("contact_no") @db.VarChar(30)
+  /// profile API: email_id
+  emailId           String?   @map("email_id") @db.VarChar(255)
+  lastLoginAt       DateTime? @map("last_login_at") @db.Timestamptz(6)
+  activeFlag        Boolean   @default(true) @map("active_flag")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Soft delete: set this instead of deleting the row.
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@unique([customerId, playerReferenceId])
+  @@map("players")
+}

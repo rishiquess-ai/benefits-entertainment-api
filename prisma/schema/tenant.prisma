@@ -1,0 +1,60 @@
+// Tenant module (src/tenant).
+
+model Tenant {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String    @db.VarChar(255)
+  /// Stored in lowercase; lookups lowercase the requested sub-domain.
+  subDomain  String    @unique @map("sub_domain") @db.VarChar(100)
+  activeFlag Boolean   @default(true) @map("active_flag")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Soft delete: set this instead of deleting the row.
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  database TenantDatabase?
+  details  TenantDetail?
+
+  @@map("tenants")
+}
+
+model TenantDatabase {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Unique: one database per tenant.
+  tenantId      String   @unique @map("tenant_id") @db.Uuid
+  dbHost        String   @map("db_host") @db.VarChar(255)
+  dbPort        Int      @default(5432) @map("db_port")
+  dbName        String   @map("db_name") @db.VarChar(100)
+  dbUsername    String   @map("db_username") @db.VarChar(100)
+  /// Encrypted with aes-256-gcm and DB_PASSWORD_ENCRYPTION_KEY
+  /// (CryptoService.encryptSecret).
+  dbPasswordEnc String   @map("db_password_enc")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_databases")
+}
+
+model TenantDetail {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Unique: one row of details per tenant.
+  tenantId                String   @unique @map("tenant_id") @db.Uuid
+  /// SSO token encryption for this tenant.
+  encryptionKey           String   @map("encryption_key")
+  encryptionIv            String   @map("encryption_iv")
+  encryptionCipher        String   @map("encryption_cipher") @db.VarChar(50)
+  profileApiUrl           String   @map("profile_api_url")
+  profileApiToken         String   @map("profile_api_token")
+  redirectBackUrl         String   @map("redirect_back_url")
+  isBackEnabled           Boolean  @default(true) @map("is_back_enabled")
+  defaultLeaderboardScope String   @map("default_leaderboard_scope") @db.VarChar(50)
+  /// { name, tagline, subtitle, logo }
+  appBranding             Json     @map("app_branding")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_details")
+}

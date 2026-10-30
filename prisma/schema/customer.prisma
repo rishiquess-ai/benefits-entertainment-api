@@ -1,0 +1,23 @@
+// Customer module.
+
+model Customer {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// profile API: identifier
+  domain                 String    @db.VarChar(255)
+  /// profile API: customer_ref_id
+  customerRefId          Int       @map("customer_ref_id")
+  /// profile API: customer_name
+  customerName           String    @map("customer_name") @db.VarChar(255)
+  leaderboardEnabledFlag Boolean   @default(true) @map("leaderboard_enabled_flag")
+  activeFlag             Boolean   @default(true) @map("active_flag")
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Soft delete: set this instead of deleting the row.
+  deletedAt              DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  players Player[]
+
+  /// A customer_ref_id is only unique within one profile API identifier.
+  @@unique([domain, customerRefId])
+  @@map("customers")
+}

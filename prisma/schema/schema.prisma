@@ -1,0 +1,15 @@
+// Master database: maps each tenant's sub-domain to its own database.
+// Models live in one .prisma file per module in this folder. Prisma merges
+// them into one schema with one migration history (prisma/migrations).
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../../src/generated/prisma"
+  runtime             = "nodejs"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}

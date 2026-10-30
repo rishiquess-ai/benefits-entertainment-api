@@ -1,114 +1,140 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# benefits-entertainment-api
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS API for Benefits Entertainment. It is multi-tenant: each tenant is identified by its sub-domain and has its own PostgreSQL database. A master database holds the list of tenants and how to connect to each tenant's database.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Setup
 
-## Description
+Requires Node.js 24 and network access to the master database.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+1. Install dependencies. This also runs `prisma generate`, which writes the Prisma client to `src/generated/prisma` (gitignored).
+   ```bash
+   npm install
+   ```
+2. Create a `.env` file in the project root with the variables below.
+3. Apply database migrations to the master database:
+   ```bash
+   npx prisma migrate deploy
+   ```
+4. Start the server:
+   ```bash
+   npm run start:dev
+   ```
 
-## Project setup
+### Environment variables
 
-```bash
-$ npm install
+| Variable                                                  | Purpose                                                                                                                                                                                                                                          |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PORT`                                                    | HTTP port. Defaults to `3000`.                                                                                                                                                                                                                   |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | Master database. Wrap `DB_PASSWORD` in double quotes if it contains special characters.                                                                                                                                                          |
+| `DB_PASSWORD_ENCRYPTION_KEY`                              | Encrypts tenant database passwords (`tenant_databases.db_password_enc`) with `aes-256-gcm`. 32 random bytes, base64 encoded: `openssl rand -base64 32`. Every server must use the same key; if it is lost, stored passwords cannot be decrypted. |
+| `PROFILE_API_BASE_URL`                                    | Base URL of the tenant profile APIs, e.g. `https://worq-marqet-api.billionscareer.com`. `tenant_details.profile_api_url` is a path on it; a full URL there is used as is.                                                                        |
+
+The app will not start if any of these (except `PORT`) is missing.
+
+## API
+
+All routes are prefixed with `/api/v1`. Successful responses are wrapped as `{ statusCode, message, data }`; errors use `{ statusCode, message, error }`.
+
+### `POST /api/v1/employee/details`
+
+```json
+{ "subDomain": "benefits-entertainment", "ssoToken": "<encrypted token>" }
 ```
 
-## Compile and run the project
+1. Finds the tenant and connects to its database.
+2. Decrypts `ssoToken` with that tenant's `encryption_cipher`, `encryption_key` and `encryption_iv` from `tenant_details`. The token must be JSON with a string `unique_identifier`.
+3. Calls the tenant's profile API to get the employee's profile.
+4. Finds the `customers` row with `domain` = profile `identifier` and `customer_ref_id` = profile `customer_ref_id`, creating it if there is none.
+5. Finds that customer's `players` row with `player_reference_id` = profile `employee_unique_id`, creating it if there is none.
+6. Returns the player.
 
-```bash
-# development
-$ npm run start
+Existing customers and players are not updated from the profile. If the existing customer or player has `active_flag = false` or `deleted_at` set, the request is rejected with 403 and no player is created. New rows get `display_name` = first and last name joined with a space, and `true` for `active_flag` and `leaderboard_enabled_flag`.
 
-# watch mode
-$ npm run start:dev
+The profile API call is `POST {PROFILE_API_BASE_URL}{profile_api_url}` with `Authorization: Bearer {profile_api_token}` and the body `{ "data": encrypt({ "unique_identifier": ... }) }`. It answers `{ "data": { "response": encrypt(profile) } }`. Both are encrypted with the same tenant key and IV as the SSO token.
 
-# production mode
-$ npm run start:prod
+The decrypted profile has `first_name`, `last_name`, `identifier`, `customer_ref_id`, `customer_name`, `emp_id`, `employee_unique_id`, `contact_no`, `email_id` and `active_flag`.
+
+The response `data` is the `players` row: `id`, `customerId`, `firstName`, `lastName`, `playerId`, `playerReferenceId`, `displayName`, `contactNo`, `emailId`, `lastLoginAt`, `activeFlag`, `createdAt`, `updatedAt`, `deletedAt`.
+
+| Status | When                                                                                                                                                |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200    | Player found or created.                                                                                                                            |
+| 400    | `subDomain` or `ssoToken` is missing or not a string.                                                                                               |
+| 401    | `ssoToken` could not be decrypted with the tenant's key, is not JSON, or has no `unique_identifier`.                                                |
+| 403    | `Customer is inactive` or `Player is inactive`: the row has `active_flag = false` or is soft-deleted.                                               |
+| 404    | No active tenant with that sub-domain, the tenant has no `tenant_databases` or `tenant_details` row, or the profile API does not know the employee. |
+| 502    | The profile API failed, timed out (10 seconds) or returned something that could not be decrypted.                                                   |
+| 503    | The tenant database could not be reached.                                                                                                           |
+
+### How a tenant is resolved
+
+1. Find the row in `tenants` with that `sub_domain` (case-insensitive), `active_flag = true` and `deleted_at` null.
+2. Find the row in `tenant_databases` with that `tenant_id`, decrypt `db_password_enc` and connect.
+3. Find the row in `tenant_details` with that `tenant_id`: SSO token encryption, profile API, branding and so on.
+
+The `tenant_databases` and `tenant_details` rows are cached in memory, and the connection to each tenant database is opened once; all of these are kept until the app restarts. **After deactivating a tenant or editing its `tenant_databases` or `tenant_details` row, restart the app.** Lookups that fail, such as an unknown sub-domain, are not cached.
+
+## Master database
+
+The schema is split into one file per module in `prisma/schema/`:
+
+| File              | Contains                                                   |
+| ----------------- | ---------------------------------------------------------- |
+| `schema.prisma`   | Generator and datasource only.                             |
+| `tenant.prisma`   | `tenants`, `tenant_databases` and `tenant_details` tables. |
+| `customer.prisma` | `customers` table, unique on `(domain, customer_ref_id)`.  |
+| `player.prisma`   | `players` table, linked to `customers`.                    |
+
+A new module with master-database tables gets its own `<module>.prisma` file in that folder. Models can reference models in other files. Prisma merges all the files into one schema, so there is still a single `prisma/migrations` folder.
+
+Only master-database tables belong here. Tables inside the tenant databases need a separate Prisma setup, because `migrate deploy` applies to the master database.
+
+### Changing the schema
+
+Do not run `prisma migrate dev` against the shared database: it can reset it. Instead:
+
+1. Edit or add a file in `prisma/schema/`.
+2. Generate the migration SQL by comparing the database, with all current migrations applied, to the new schema:
+   ```bash
+   mkdir prisma/migrations/20261101120000_describe_change
+   npx prisma migrate diff --from-config-datasource --to-schema prisma/schema \
+     --script -o prisma/migrations/20261101120000_describe_change/migration.sql
+   ```
+3. Review the SQL, then apply it with `npx prisma migrate deploy`.
+4. Regenerate the client with `npx prisma generate`.
+
+### Adding a tenant
+
+1. Insert a row into `tenants`.
+2. Insert a row into `tenant_databases` with that tenant's `id` as `tenant_id`. `db_password_enc` must be the password encrypted by `CryptoService.encryptSecret()` with `DB_PASSWORD_ENCRYPTION_KEY`; a plain-text password will not work. There is no command for this yet.
+3. Insert a row into `tenant_details` with that tenant's `id` as `tenant_id`. `encryption_cipher`, `encryption_key` and `encryption_iv` are the values the tenant's SSO provider encrypts tokens with. For `aes-256-cbc` the key must be 32 characters and the IV 16.
+
+## Project structure
+
+```
+prisma/
+  schema/            one .prisma file per module
+  migrations/        migration history for the master database
+prisma.config.ts     Prisma CLI config; builds the database URL from DB_* in .env
+src/
+  main.ts            starts the server
+  app.setup.ts       /api/v1 prefix, validation and response format
+  app.module.ts
+  common/            CryptoService, response interceptor, @ResponseMessage()
+  prisma/            PrismaService for the master database
+  tenant/            tenant lookup, cache and tenant database connections
+  employee/          POST /employee/details and the profile API client
+  customer/          find or create customers
+  player/            find or create players
+  generated/prisma/  generated Prisma client (gitignored)
 ```
 
-## Run tests
+## Scripts
 
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
-```
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+| Command              | Does                    |
+| -------------------- | ----------------------- |
+| `npm run start:dev`  | Start with auto-reload. |
+| `npm run build`      | Compile to `dist/`.     |
+| `npm run start:prod` | Run the compiled app.   |
+| `npm run lint`       | Lint with oxlint.       |
+| `npm run format`     | Format with Prettier.   |
